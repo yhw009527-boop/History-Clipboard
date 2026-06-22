@@ -1,0 +1,18 @@
+{
+  "name": "clipboard-history-desktop",
+  "version": "0.1.0",
+  "description": "Windows history clipboard desktop app.",
+  "main": "dist/main.js",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "package:win": "npm run build && node scripts/package-win.js",
+    "start": "npm run build && set ELECTRON_RUN_AS_NODE=&& electron .",
+    "smoke": "npm run build && set ELECTRON_RUN_AS_NODE=&& electron . --smoke-test"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "electron": "latest",
+    "typescript": "latest"
+  }
+}

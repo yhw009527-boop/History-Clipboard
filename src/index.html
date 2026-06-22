@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>历史剪贴板</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>历史剪贴板</h1>
+          <p data-status>正在启动</p>
+        </div>
+        <span class="count" data-total-count>共 0 条</span>
+      </header>
+
+      <section class="toolbar" aria-label="历史记录工具栏">
+        <label class="search-box">
+          <span>搜索</span>
+          <input data-search type="search" placeholder="输入文字关键词" autocomplete="off" />
+        </label>
+        <label class="retention-box">
+          <span>保留时长</span>
+          <select data-retention-days>
+            <option value="1">1 天</option>
+            <option value="3">3 天</option>
+            <option value="5">5 天</option>
+          </select>
+        </label>
+        <label class="startup-box">
+          <input data-launch-at-login type="checkbox" />
+          <span>开机自启</span>
+        </label>
+        <div class="shortcut-note" aria-label="全局快捷键">
+          <span>Ctrl+Shift+V</span>
+        </div>
+      </section>
+
+      <section class="history-list" data-history-list aria-label="剪贴板历史"></section>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
