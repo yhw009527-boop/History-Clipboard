@@ -23,6 +23,13 @@ export interface ClipboardImageItem extends ClipboardBaseItem {
 export interface ClipboardHistorySettings {
   retentionDays: RetentionDays;
   launchAtLogin: boolean;
+  floatingButtonVisible: boolean;
+  floatingWindowPosition: FloatingWindowPosition | null;
+}
+
+export interface FloatingWindowPosition {
+  x: number;
+  y: number;
 }
 
 export interface ClipboardHistoryApi {
@@ -33,6 +40,12 @@ export interface ClipboardHistoryApi {
   toggleItemPinned(id: string): Promise<boolean>;
   setRetentionDays(retentionDays: RetentionDays): Promise<ClipboardHistorySettings>;
   setLaunchAtLogin(launchAtLogin: boolean): Promise<ClipboardHistorySettings>;
+  setFloatingButtonVisible(visible: boolean): Promise<ClipboardHistorySettings>;
+  openFloatingPanel(): Promise<boolean>;
+  closeFloatingPanel(): Promise<boolean>;
+  beginFloatingWindowDrag(screenX: number, screenY: number): void;
+  endFloatingWindowDrag(): void;
+  onFloatingPanelChanged(callback: (isOpen: boolean) => void): () => void;
   onHistoryChanged(callback: (items: ClipboardHistoryItem[]) => void): () => void;
   onSettingsChanged(callback: (settings: ClipboardHistorySettings) => void): () => void;
 }

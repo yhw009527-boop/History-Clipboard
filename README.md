@@ -64,6 +64,7 @@ History Clipboard is a Windows desktop clipboard history app built with Electron
 - Deduplicates repeated clipboard content and moves the latest copy to the top.
 - Supports search, pinning, deleting, and retention settings.
 - Provides a system tray entry and `Ctrl+Shift+V` global shortcut.
+- Provides a draggable always-on-top floating button and a lightweight floating history panel.
 - Supports optional launch at login.
 
 ### Development

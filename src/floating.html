@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>历史剪贴板悬浮面板</title>
+    <link rel="stylesheet" href="./floating.css" />
+  </head>
+  <body>
+    <section class="floating-panel" data-floating-panel hidden aria-label="最近剪贴板记录">
+      <header class="floating-panel__header">
+        <div>
+          <h1>最近记录</h1>
+          <p data-floating-status>点击一条记录复制回剪贴板</p>
+        </div>
+        <button class="floating-panel__close" data-floating-close type="button" aria-label="收起悬浮面板">
+          ×
+        </button>
+      </header>
+      <div class="floating-panel__list" data-floating-list></div>
+    </section>
+
+    <script src="./floating.js"></script>
+  </body>
+</html>

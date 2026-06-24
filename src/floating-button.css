@@ -1,0 +1,57 @@
+:root {
+  font-family:
+    "Microsoft YaHei",
+    "Segoe UI",
+    Arial,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.floating-button {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+.floating-button:hover {
+  filter: brightness(1.04);
+}
+
+.floating-button:focus-visible {
+  outline: 3px solid #8ec8ef;
+  outline-offset: -3px;
+}
+
+.floating-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center center;
+  pointer-events: none;
+}

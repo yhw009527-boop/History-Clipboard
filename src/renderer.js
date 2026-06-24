@@ -4,12 +4,14 @@ const searchInput = document.querySelector("[data-search]");
 const totalCountElement = document.querySelector("[data-total-count]");
 const retentionSelect = document.querySelector("[data-retention-days]");
 const launchAtLoginInput = document.querySelector("[data-launch-at-login]");
+const floatingButtonVisibleInput = document.querySelector("[data-floating-button-visible]");
 
 let currentItems = [];
 let currentSearchQuery = "";
 let currentSettings = {
   retentionDays: 3,
-  launchAtLogin: false
+  launchAtLogin: false,
+  floatingButtonVisible: true
 };
 
 if (statusElement) {
@@ -51,7 +53,11 @@ function renderHistory(items) {
     const titleElement = document.createElement("h2");
     titleElement.textContent = items.length === 0 ? "暂无剪贴板记录" : "没有匹配的文字记录";
 
-    emptyElement.append(titleElement);
+    const descriptionElement = document.createElement("p");
+    descriptionElement.textContent =
+      items.length === 0 ? "复制文字或图片后会自动出现在这里。" : "图片记录不会参与文字搜索。";
+
+    emptyElement.append(titleElement, descriptionElement);
     listElement.append(emptyElement);
     return;
   }
@@ -111,6 +117,7 @@ function renderHistory(items) {
     pinButton.title = item.pinned ? "取消置顶" : "置顶";
     pinButton.setAttribute("aria-label", item.pinned ? "取消置顶" : "置顶");
     pinButton.textContent = item.pinned ? "★" : "☆";
+    pinButton.dataset.iconLabel = item.pinned ? "已置顶" : "置顶";
     pinButton.addEventListener("click", async () => {
       const toggled = await window.clipboardHistory.toggleItemPinned(item.id);
 
@@ -125,6 +132,7 @@ function renderHistory(items) {
     deleteButton.title = "删除";
     deleteButton.setAttribute("aria-label", "删除");
     deleteButton.textContent = "×";
+    deleteButton.dataset.iconLabel = "删除";
     deleteButton.addEventListener("click", async () => {
       const deleted = await window.clipboardHistory.deleteItem(item.id);
 
@@ -150,6 +158,10 @@ function renderSettings(settings) {
 
   if (launchAtLoginInput) {
     launchAtLoginInput.checked = settings.launchAtLogin;
+  }
+
+  if (floatingButtonVisibleInput) {
+    floatingButtonVisibleInput.checked = settings.floatingButtonVisible;
   }
 }
 
@@ -180,6 +192,17 @@ launchAtLoginInput?.addEventListener("change", async () => {
 
   if (statusElement) {
     statusElement.textContent = settings.launchAtLogin ? "已开启开机自启" : "已关闭开机自启";
+  }
+});
+
+floatingButtonVisibleInput?.addEventListener("change", async () => {
+  const settings = await window.clipboardHistory.setFloatingButtonVisible(
+    floatingButtonVisibleInput.checked
+  );
+  renderSettings(settings);
+
+  if (statusElement) {
+    statusElement.textContent = settings.floatingButtonVisible ? "已显示悬浮按钮" : "已隐藏悬浮按钮";
   }
 });
 

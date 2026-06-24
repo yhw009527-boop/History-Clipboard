@@ -1,12 +1,14 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   Menu,
   Tray,
   clipboard,
   globalShortcut,
   ipcMain,
-  nativeImage
+  nativeImage,
+  screen
 } from "electron";
 import fs from "node:fs";
 import os from "node:os";
@@ -23,6 +25,7 @@ import type {
   ClipboardHistorySettings,
   ClipboardImageItem,
   ClipboardTextItem,
+  FloatingWindowPosition,
   RetentionDays
 } from "./types";
 
@@ -33,6 +36,7 @@ const isM5SmokeTest = process.argv.includes("--m5-smoke-test");
 const isM6SmokeTest = process.argv.includes("--m6-smoke-test");
 const isM7SmokeTest = process.argv.includes("--m7-smoke-test");
 const isM8SmokeTest = process.argv.includes("--m8-smoke-test");
+const isM10SmokeTest = process.argv.includes("--m10-smoke-test");
 const isAnySmokeTest =
   isSmokeTest ||
   isM3SmokeTest ||
@@ -40,25 +44,55 @@ const isAnySmokeTest =
   isM5SmokeTest ||
   isM6SmokeTest ||
   isM7SmokeTest ||
-  isM8SmokeTest;
+  isM8SmokeTest ||
+  isM10SmokeTest;
 const maxHistoryItems = 50;
 const maxImageBytes = 10 * 1024 * 1024;
 const pollIntervalMs = 600;
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 const globalShortcutAccelerator = "CommandOrControl+Shift+V";
+const floatingButtonSize = 56;
+const floatingPanelWidth = 360;
+const floatingPanelHeight = 430;
+const floatingWindowMargin = 16;
 
 let mainWindow: BrowserWindow | null = null;
+let floatingWindow: BrowserWindow | null = null;
+let floatingPanelWindow: BrowserWindow | null = null;
+let isFloatingPanelOpen = false;
+let floatingDragState: {
+  window: BrowserWindow;
+  isPanelOpen: boolean;
+  startMouseX: number;
+  startMouseY: number;
+  startWindowX: number;
+  startWindowY: number;
+} | null = null;
+let floatingDragTimer: NodeJS.Timeout | null = null;
+let floatingPositionSaveTimer: NodeJS.Timeout | null = null;
 let lastClipboardText = "";
 let lastClipboardImageDataUrl = "";
 let pollTimer: NodeJS.Timeout | null = null;
 let historyItems: ClipboardHistoryItem[] = [];
 let clipboardHistorySettings: ClipboardHistorySettings = {
   retentionDays: 3,
-  launchAtLogin: false
+  launchAtLogin: false,
+  floatingButtonVisible: true,
+  floatingWindowPosition: null
 };
 let tray: Tray | null = null;
 let isQuitting = false;
 let smokeUserDataPath: string | null = null;
+
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
+app.commandLine.appendSwitch("disable-gpu-sandbox");
+
+if (isM4SmokeTest || isM5SmokeTest || isM6SmokeTest || isM7SmokeTest || isM8SmokeTest || isM10SmokeTest) {
+  smokeUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "clipboard-history-smoke-"));
+  app.setPath("userData", smokeUserDataPath);
+}
 
 function createTextItem(text: string): ClipboardTextItem {
   return {
@@ -83,10 +117,14 @@ function createImageItem(imageDataUrl: string, byteSize: number): ClipboardImage
 
 function publishHistory(): void {
   mainWindow?.webContents.send("clipboard-history:items", historyItems);
+  floatingWindow?.webContents.send("clipboard-history:items", historyItems);
+  floatingPanelWindow?.webContents.send("clipboard-history:items", historyItems);
 }
 
 function publishSettings(): void {
   mainWindow?.webContents.send("clipboard-history:settings", clipboardHistorySettings);
+  floatingWindow?.webContents.send("clipboard-history:settings", clipboardHistorySettings);
+  floatingPanelWindow?.webContents.send("clipboard-history:settings", clipboardHistorySettings);
 }
 
 function persistHistory(): void {
@@ -104,6 +142,398 @@ function showMainWindow(): void {
 
   mainWindow?.show();
   mainWindow?.focus();
+}
+
+function getFloatingWindowBounds(isPanelOpen: boolean): Electron.Rectangle {
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = isPanelOpen ? floatingPanelWidth : floatingButtonSize;
+  const height = isPanelOpen ? floatingPanelHeight : floatingButtonSize;
+  const position = getFloatingWindowPosition(isPanelOpen);
+
+  return {
+    width,
+    height,
+    x: position.x,
+    y: position.y
+  };
+}
+
+function getDefaultFloatingWindowPosition(isPanelOpen: boolean): FloatingWindowPosition {
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = isPanelOpen ? floatingPanelWidth : floatingButtonSize;
+  const height = isPanelOpen ? floatingPanelHeight : floatingButtonSize;
+
+  return {
+    x: Math.round(workArea.x + workArea.width - width - floatingWindowMargin),
+    y: Math.round(workArea.y + workArea.height - height - floatingWindowMargin)
+  };
+}
+
+function clampFloatingWindowPosition(
+  position: FloatingWindowPosition,
+  isPanelOpen: boolean
+): FloatingWindowPosition {
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = isPanelOpen ? floatingPanelWidth : floatingButtonSize;
+  const height = isPanelOpen ? floatingPanelHeight : floatingButtonSize;
+  const maxX = workArea.x + workArea.width - width;
+  const maxY = workArea.y + workArea.height - height;
+
+  return {
+    x: Math.round(Math.min(Math.max(position.x, workArea.x), maxX)),
+    y: Math.round(Math.min(Math.max(position.y, workArea.y), maxY))
+  };
+}
+
+function getFloatingWindowPosition(isPanelOpen: boolean): FloatingWindowPosition {
+  const fallbackPosition = getDefaultFloatingWindowPosition(isPanelOpen);
+  const savedPosition = clipboardHistorySettings.floatingWindowPosition ?? fallbackPosition;
+
+  return clampFloatingWindowPosition(savedPosition, isPanelOpen);
+}
+
+function saveFloatingWindowPosition(position: FloatingWindowPosition): void {
+  const nextPosition = clampFloatingWindowPosition(position, false);
+
+  clipboardHistorySettings = {
+    ...clipboardHistorySettings,
+    floatingWindowPosition: nextPosition
+  };
+  persistSettings();
+  publishSettings();
+}
+
+function rememberFloatingWindowPosition(window: BrowserWindow): void {
+  const [x, y] = window.getPosition();
+  saveFloatingWindowPosition({ x, y });
+}
+
+function scheduleFloatingWindowPositionSave(window: BrowserWindow): void {
+  if (floatingDragState) {
+    return;
+  }
+
+  if (floatingPositionSaveTimer) {
+    clearTimeout(floatingPositionSaveTimer);
+  }
+
+  floatingPositionSaveTimer = setTimeout(() => {
+    floatingPositionSaveTimer = null;
+
+    if (!window.isDestroyed()) {
+      rememberFloatingWindowPosition(window);
+    }
+  }, 250);
+}
+
+function stopFloatingWindowDragTimer(): void {
+  if (floatingDragTimer) {
+    clearInterval(floatingDragTimer);
+    floatingDragTimer = null;
+  }
+}
+
+function isFiniteCoordinate(value: number): boolean {
+  return Number.isFinite(value);
+}
+
+function normalizeFloatingCoordinate(value: number): number | null {
+  if (!isFiniteCoordinate(value)) {
+    return null;
+  }
+
+  return Math.round(value);
+}
+
+function getFloatingWindowForWebContents(webContentsId: number): BrowserWindow | null {
+  if (floatingWindow?.webContents.id === webContentsId) {
+    return floatingWindow;
+  }
+
+  if (floatingPanelWindow?.webContents.id === webContentsId) {
+    return floatingPanelWindow;
+  }
+
+  return null;
+}
+
+function beginFloatingWindowDrag(
+  webContentsId: number,
+  screenX: number,
+  screenY: number
+): boolean {
+  const targetWindow = getFloatingWindowForWebContents(webContentsId);
+
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return false;
+  }
+
+  const startPoint =
+    isFiniteCoordinate(screenX) && isFiniteCoordinate(screenY)
+      ? { x: screenX, y: screenY }
+      : screen.getCursorScreenPoint();
+  const [startWindowX, startWindowY] = targetWindow.getPosition();
+  floatingDragState = {
+    window: targetWindow,
+    isPanelOpen: targetWindow === floatingPanelWindow,
+    startMouseX: startPoint.x,
+    startMouseY: startPoint.y,
+    startWindowX,
+    startWindowY
+  };
+
+  stopFloatingWindowDragTimer();
+  floatingDragTimer = setInterval(() => {
+    try {
+      const cursorPoint = screen.getCursorScreenPoint();
+      moveFloatingWindowDrag(cursorPoint.x, cursorPoint.y);
+    } catch (error) {
+      console.warn("Floating window drag skipped:", error);
+    }
+  }, 16);
+
+  return true;
+}
+
+function moveFloatingWindowDrag(screenX: number, screenY: number): boolean {
+  if (!floatingDragState || floatingDragState.window.isDestroyed()) {
+    return false;
+  }
+
+  if (!isFiniteCoordinate(screenX) || !isFiniteCoordinate(screenY)) {
+    return false;
+  }
+
+  const nextPosition = clampFloatingWindowPosition(
+    {
+      x: floatingDragState.startWindowX + screenX - floatingDragState.startMouseX,
+      y: floatingDragState.startWindowY + screenY - floatingDragState.startMouseY
+    },
+    floatingDragState.isPanelOpen
+  );
+
+  const nextX = normalizeFloatingCoordinate(nextPosition.x);
+  const nextY = normalizeFloatingCoordinate(nextPosition.y);
+
+  if (nextX === null || nextY === null) {
+    return false;
+  }
+
+  try {
+    floatingDragState.window.setPosition(nextX, nextY, false);
+  } catch (error) {
+    console.warn("Floating window position skipped:", error);
+    return false;
+  }
+
+  return true;
+}
+
+function endFloatingWindowDrag(): boolean {
+  if (!floatingDragState || floatingDragState.window.isDestroyed()) {
+    stopFloatingWindowDragTimer();
+    floatingDragState = null;
+    return false;
+  }
+
+  rememberFloatingWindowPosition(floatingDragState.window);
+  stopFloatingWindowDragTimer();
+  floatingDragState = null;
+  return true;
+}
+
+function sendFloatingPanelState(isPanelOpen: boolean): void {
+  isFloatingPanelOpen = isPanelOpen;
+  floatingWindow?.webContents.send("clipboard-history:floating-panel", false);
+  floatingPanelWindow?.webContents.send("clipboard-history:floating-panel", isPanelOpen);
+}
+
+function createFloatingWindow(): BrowserWindow {
+  floatingWindow = new BrowserWindow({
+    ...getFloatingWindowBounds(false),
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    transparent: true,
+    hasShadow: false,
+    backgroundColor: "#00000000",
+    title: "历史剪贴板悬浮窗",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  floatingWindow.setAlwaysOnTop(true, "floating");
+  floatingWindow.loadFile(path.join(__dirname, "../src/floating-button.html"));
+  floatingWindow.on("closed", () => {
+    if (floatingDragState?.window === floatingWindow) {
+      stopFloatingWindowDragTimer();
+      floatingDragState = null;
+    }
+
+    floatingWindow = null;
+  });
+  floatingWindow.on("moved", () => {
+    if (floatingWindow && !floatingWindow.isDestroyed()) {
+      scheduleFloatingWindowPositionSave(floatingWindow);
+    }
+  });
+
+  floatingWindow.webContents.once("did-finish-load", () => {
+    publishHistory();
+    publishSettings();
+    floatingWindow?.webContents.send("clipboard-history:floating-panel", false);
+  });
+
+  return floatingWindow;
+}
+
+function createFloatingPanelWindow(): BrowserWindow {
+  floatingPanelWindow = new BrowserWindow({
+    ...getFloatingWindowBounds(true),
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: "#f8fcff",
+    title: "历史剪贴板悬浮面板",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  });
+
+  floatingPanelWindow.setAlwaysOnTop(true, "floating");
+  floatingPanelWindow.loadFile(path.join(__dirname, "../src/floating.html"));
+  floatingPanelWindow.on("closed", () => {
+    if (floatingDragState?.window === floatingPanelWindow) {
+      stopFloatingWindowDragTimer();
+      floatingDragState = null;
+    }
+
+    floatingPanelWindow = null;
+  });
+  floatingPanelWindow.on("moved", () => {
+    if (floatingPanelWindow && !floatingPanelWindow.isDestroyed()) {
+      scheduleFloatingWindowPositionSave(floatingPanelWindow);
+    }
+  });
+
+  floatingPanelWindow.webContents.once("did-finish-load", () => {
+    publishHistory();
+    publishSettings();
+    floatingPanelWindow?.webContents.send("clipboard-history:floating-panel", isFloatingPanelOpen);
+  });
+
+  return floatingPanelWindow;
+}
+
+function showFloatingButton(): void {
+  if (!floatingWindow || floatingWindow.isDestroyed()) {
+    createFloatingWindow();
+  }
+
+  floatingWindow?.setBounds(getFloatingWindowBounds(false));
+
+  if (!isFloatingPanelOpen) {
+    floatingWindow?.showInactive();
+  }
+}
+
+function updateTrayMenu(): void {
+  if (!tray) {
+    return;
+  }
+
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "打开历史剪贴板",
+        click: showMainWindow
+      },
+      {
+        label: "打开悬浮面板",
+        click: openFloatingPanel
+      },
+      {
+        label: clipboardHistorySettings.floatingButtonVisible ? "隐藏悬浮按钮" : "显示悬浮按钮",
+        click: () => {
+          setFloatingButtonVisible(!clipboardHistorySettings.floatingButtonVisible);
+        }
+      },
+      { type: "separator" },
+      {
+        label: "退出",
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        }
+      }
+    ])
+  );
+}
+
+function setFloatingButtonVisible(visible: boolean): ClipboardHistorySettings {
+  clipboardHistorySettings = {
+    ...clipboardHistorySettings,
+    floatingButtonVisible: visible
+  };
+  persistSettings();
+
+  if (visible) {
+    showFloatingButton();
+  } else {
+    closeFloatingPanel();
+    floatingWindow?.hide();
+  }
+
+  updateTrayMenu();
+  publishSettings();
+  return clipboardHistorySettings;
+}
+
+function openFloatingPanel(): void {
+  if (!clipboardHistorySettings.floatingButtonVisible) {
+    setFloatingButtonVisible(true);
+  }
+
+  if (!floatingWindow || floatingWindow.isDestroyed()) {
+    createFloatingWindow();
+  }
+
+  if (!floatingPanelWindow || floatingPanelWindow.isDestroyed()) {
+    createFloatingPanelWindow();
+  }
+
+  isFloatingPanelOpen = true;
+  floatingPanelWindow?.setBounds(getFloatingWindowBounds(true));
+  sendFloatingPanelState(true);
+  floatingWindow?.hide();
+  floatingPanelWindow?.showInactive();
+}
+
+function closeFloatingPanel(): void {
+  isFloatingPanelOpen = false;
+  sendFloatingPanelState(false);
+  floatingPanelWindow?.hide();
+
+  if (clipboardHistorySettings.floatingButtonVisible) {
+    showFloatingButton();
+  }
 }
 
 function createTrayImage(): Electron.NativeImage {
@@ -125,22 +555,26 @@ function createTray(): void {
 
   tray = new Tray(createTrayImage());
   tray.setToolTip("历史剪贴板");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: "打开历史剪贴板",
-        click: showMainWindow
-      },
-      {
-        label: "退出",
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        }
-      }
-    ])
-  );
-  tray.on("click", showMainWindow);
+  updateTrayMenu();
+  tray.on("click", openFloatingPanel);
+}
+
+function showAboutDialog(): void {
+  const options: Electron.MessageBoxOptions = {
+    type: "info",
+    title: "关于历史剪贴板",
+    message: "历史剪贴板",
+    detail: `版本 ${app.getVersion()}\n氧化物制作`,
+    buttons: ["确定"],
+    noLink: true
+  };
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    dialog.showMessageBox(mainWindow, options);
+    return;
+  }
+
+  dialog.showMessageBox(options);
 }
 
 function createApplicationMenu(): void {
@@ -230,7 +664,7 @@ function createApplicationMenu(): void {
         submenu: [
           {
             label: "关于历史剪贴板",
-            role: "about"
+            click: showAboutDialog
           }
         ]
       }
@@ -245,7 +679,7 @@ function applyLaunchAtLogin(): void {
 }
 
 function registerGlobalShortcut(): void {
-  const isRegistered = globalShortcut.register(globalShortcutAccelerator, showMainWindow);
+  const isRegistered = globalShortcut.register(globalShortcutAccelerator, openFloatingPanel);
 
   if (!isRegistered) {
     console.warn(`Global shortcut ${globalShortcutAccelerator} registration failed.`);
@@ -423,6 +857,28 @@ ipcMain.handle("clipboard-history:set-launch-at-login", (_event, launchAtLogin: 
   applyLaunchAtLogin();
   publishSettings();
   return clipboardHistorySettings;
+});
+
+ipcMain.handle("clipboard-history:set-floating-button-visible", (_event, visible: boolean) =>
+  setFloatingButtonVisible(visible)
+);
+
+ipcMain.handle("clipboard-history:open-floating-panel", () => {
+  openFloatingPanel();
+  return true;
+});
+
+ipcMain.handle("clipboard-history:close-floating-panel", () => {
+  closeFloatingPanel();
+  return true;
+});
+
+ipcMain.on("clipboard-history:begin-floating-window-drag", (event, screenX: number, screenY: number) => {
+  beginFloatingWindowDrag(event.sender.id, screenX, screenY);
+});
+
+ipcMain.on("clipboard-history:end-floating-window-drag", () => {
+  endFloatingWindowDrag();
 });
 
 ipcMain.handle("clipboard-history:delete-item", (_event, id: string) => {
@@ -866,6 +1322,118 @@ async function runM8SmokeTest(): Promise<void> {
   console.log("M8_SMOKE_TEST_TRAY_SHORTCUT_LOGIN_OK");
 }
 
+async function runM10SmokeTest(): Promise<void> {
+  const smokeText = `M10 floating ${Date.now()}`;
+  rememberClipboardText(smokeText);
+  showFloatingButton();
+
+  if (!floatingWindow || !floatingWindow.isVisible()) {
+    throw new Error("M10 smoke floating button missing");
+  }
+
+  const hasFloatingButton = await floatingWindow.webContents.executeJavaScript(
+    `Boolean(document.querySelector("[data-floating-button]"))`
+  );
+
+  if (!hasFloatingButton) {
+    throw new Error("M10 smoke floating button UI missing");
+  }
+
+  const originalFloatingBounds = floatingWindow.getBounds();
+
+  beginFloatingWindowDrag(
+    floatingWindow.webContents.id,
+    originalFloatingBounds.x + 10,
+    originalFloatingBounds.y + 10
+  );
+  moveFloatingWindowDrag(originalFloatingBounds.x - 30, originalFloatingBounds.y - 30);
+  endFloatingWindowDrag();
+
+  const movedFloatingBounds = floatingWindow.getBounds();
+
+  if (
+    movedFloatingBounds.x === originalFloatingBounds.x &&
+    movedFloatingBounds.y === originalFloatingBounds.y
+  ) {
+    throw new Error("M10 smoke floating drag failed");
+  }
+
+  openFloatingPanel();
+
+  if (!floatingPanelWindow || !floatingPanelWindow.isVisible()) {
+    throw new Error("M10 smoke floating panel did not open");
+  }
+
+  const panelHasFloatingButton = await floatingPanelWindow.webContents.executeJavaScript(
+    `Boolean(document.querySelector("[data-floating-button]"))`
+  );
+
+  if (panelHasFloatingButton) {
+    throw new Error("M10 smoke floating button rendered inside panel");
+  }
+
+  await floatingPanelWindow.webContents.executeJavaScript(
+    `
+      new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("M10 smoke floating UI timeout")), 3000);
+        const check = () => {
+          const panel = document.querySelector("[data-floating-panel]");
+          const card = Array.from(document.querySelectorAll("[data-floating-item]"))
+            .find((item) => item.textContent.includes(${JSON.stringify(smokeText)}));
+          if (!panel || panel.hidden || !card) {
+            setTimeout(check, 100);
+            return;
+          }
+          card.click();
+          setTimeout(() => {
+            clearTimeout(timeout);
+            resolve(true);
+          }, 150);
+        };
+        check();
+      });
+    `
+  );
+
+  if (clipboard.readText() !== smokeText) {
+    throw new Error("M10 smoke floating copy-back failed");
+  }
+
+  if (!floatingWindow.isVisible() || floatingPanelWindow.isVisible() || isFloatingPanelOpen) {
+    throw new Error("M10 smoke floating panel did not collapse");
+  }
+
+  setFloatingButtonVisible(false);
+
+  if (floatingWindow.isVisible() || floatingPanelWindow.isVisible() || clipboardHistorySettings.floatingButtonVisible) {
+    throw new Error("M10 smoke floating hide failed");
+  }
+
+  const hiddenSettings = loadClipboardHistorySettings(app.getPath("userData"));
+
+  if (hiddenSettings.floatingButtonVisible) {
+    throw new Error("M10 smoke floating setting persisted hide failed");
+  }
+
+  setFloatingButtonVisible(true);
+
+  if (!floatingWindow.isVisible() || !clipboardHistorySettings.floatingButtonVisible) {
+    throw new Error("M10 smoke floating show failed");
+  }
+
+  mainWindow?.close();
+
+  if (mainWindow?.isVisible()) {
+    throw new Error("M10 smoke main window close did not hide");
+  }
+
+  if (!floatingWindow.isVisible()) {
+    throw new Error("M10 smoke floating button hidden after main close");
+  }
+
+  console.log("M10_SMOKE_TEST_FLOATING_WINDOW_OK");
+}
+
 function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 960,
@@ -884,7 +1452,7 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.loadFile(path.join(__dirname, "../src/index.html"));
   mainWindow.on("close", (event) => {
-    if (isQuitting || (isAnySmokeTest && !isM8SmokeTest)) {
+    if (isQuitting || (isAnySmokeTest && !isM8SmokeTest && !isM10SmokeTest)) {
       return;
     }
 
@@ -900,9 +1468,12 @@ function createMainWindow(): BrowserWindow {
         isM5SmokeTest ||
         isM6SmokeTest ||
         isM7SmokeTest ||
-        isM8SmokeTest
+        isM8SmokeTest ||
+        isM10SmokeTest
       ) {
-        const smokeTest = isM8SmokeTest
+        const smokeTest = isM10SmokeTest
+          ? runM10SmokeTest
+          : isM8SmokeTest
           ? runM8SmokeTest
           : isM7SmokeTest
           ? runM7SmokeTest
@@ -921,6 +1492,8 @@ function createMainWindow(): BrowserWindow {
             globalShortcut.unregisterAll();
             tray?.destroy();
             tray = null;
+            floatingWindow?.close();
+            floatingPanelWindow?.close();
             mainWindow?.close();
             app.quit();
           })
@@ -930,6 +1503,8 @@ function createMainWindow(): BrowserWindow {
             globalShortcut.unregisterAll();
             tray?.destroy();
             tray = null;
+            floatingWindow?.close();
+            floatingPanelWindow?.close();
             cleanupSmokeUserData();
             console.error(error.message);
             app.exit(1);
@@ -956,11 +1531,6 @@ if (!gotSingleInstanceLock) {
   app.on("second-instance", showMainWindow);
 
   app.whenReady().then(() => {
-    if (isM4SmokeTest || isM5SmokeTest || isM6SmokeTest || isM7SmokeTest || isM8SmokeTest) {
-      smokeUserDataPath = fs.mkdtempSync(path.join(os.tmpdir(), "clipboard-history-smoke-"));
-      app.setPath("userData", smokeUserDataPath);
-    }
-
     clipboardHistorySettings = loadClipboardHistorySettings(app.getPath("userData"));
     historyItems = [];
     updateHistory(loadHistory(app.getPath("userData")).slice(0, maxHistoryItems));
@@ -971,6 +1541,9 @@ if (!gotSingleInstanceLock) {
     createApplicationMenu();
     createMainWindow();
     createTray();
+    if (clipboardHistorySettings.floatingButtonVisible) {
+      showFloatingButton();
+    }
     applyLaunchAtLogin();
     registerGlobalShortcut();
     startClipboardPolling();
@@ -993,9 +1566,18 @@ if (!gotSingleInstanceLock) {
   app.on("before-quit", () => {
     isQuitting = true;
     stopClipboardPolling();
+    stopFloatingWindowDragTimer();
     globalShortcut.unregisterAll();
     tray?.destroy();
     tray = null;
+    if (floatingPositionSaveTimer) {
+      clearTimeout(floatingPositionSaveTimer);
+      floatingPositionSaveTimer = null;
+    }
+    floatingWindow?.destroy();
+    floatingWindow = null;
+    floatingPanelWindow?.destroy();
+    floatingPanelWindow = null;
     cleanupSmokeUserData();
   });
 }

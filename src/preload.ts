@@ -16,6 +16,24 @@ const clipboardHistoryApi: ClipboardHistoryApi = {
     ipcRenderer.invoke("clipboard-history:set-retention-days", retentionDays),
   setLaunchAtLogin: (launchAtLogin: boolean) =>
     ipcRenderer.invoke("clipboard-history:set-launch-at-login", launchAtLogin),
+  setFloatingButtonVisible: (visible: boolean) =>
+    ipcRenderer.invoke("clipboard-history:set-floating-button-visible", visible),
+  openFloatingPanel: () => ipcRenderer.invoke("clipboard-history:open-floating-panel"),
+  closeFloatingPanel: () => ipcRenderer.invoke("clipboard-history:close-floating-panel"),
+  beginFloatingWindowDrag: (screenX: number, screenY: number) =>
+    ipcRenderer.send("clipboard-history:begin-floating-window-drag", screenX, screenY),
+  endFloatingWindowDrag: () => ipcRenderer.send("clipboard-history:end-floating-window-drag"),
+  onFloatingPanelChanged: (callback: (isOpen: boolean) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, isOpen: boolean) => {
+      callback(isOpen);
+    };
+
+    ipcRenderer.on("clipboard-history:floating-panel", listener);
+
+    return () => {
+      ipcRenderer.removeListener("clipboard-history:floating-panel", listener);
+    };
+  },
   onHistoryChanged: (callback: (items: ClipboardHistoryItem[]) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, items: ClipboardHistoryItem[]) => {
       callback(items);

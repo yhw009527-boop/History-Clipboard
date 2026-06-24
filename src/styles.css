@@ -57,7 +57,7 @@ h1 {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px 118px 130px;
+  grid-template-columns: minmax(0, 1fr) 150px 112px 112px 130px;
   gap: 12px;
   align-items: end;
   padding-top: 18px;
@@ -65,7 +65,8 @@ h1 {
 
 .search-box,
 .retention-box,
-.startup-box {
+.startup-box,
+.floating-toggle {
   display: grid;
   gap: 8px;
   color: #426b84;
@@ -95,6 +96,7 @@ h1 {
 }
 
 .startup-box,
+.floating-toggle,
 .shortcut-note {
   display: flex;
   align-items: center;
@@ -113,7 +115,13 @@ h1 {
   cursor: pointer;
 }
 
-.startup-box input {
+.floating-toggle {
+  gap: 8px;
+  cursor: pointer;
+}
+
+.startup-box input,
+.floating-toggle input {
   width: 16px;
   height: 16px;
   accent-color: #2f8ac0;
@@ -221,7 +229,7 @@ h1 {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 34px;
+  width: 42px;
   height: 34px;
   border: 1px solid #c9e4f7;
   border-radius: 8px;
@@ -229,7 +237,13 @@ h1 {
   color: #256c95;
   cursor: pointer;
   font: inherit;
-  font-size: 18px;
+  font-size: 16px;
+}
+
+.icon-button::after {
+  content: attr(data-icon-label);
+  margin-left: 3px;
+  font-size: 11px;
 }
 
 .icon-button:hover {
@@ -248,12 +262,48 @@ h1 {
 
 .empty-state {
   display: grid;
+  gap: 8px;
   place-items: center;
   min-height: calc(100vh - 188px);
   color: #6d8799;
+  text-align: center;
 }
 
 .empty-state h2 {
   font-size: 18px;
   font-weight: 500;
+}
+
+.empty-state p {
+  font-size: 14px;
+}
+
+@media (max-width: 860px) {
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr) 150px;
+  }
+}
+
+@media (max-width: 620px) {
+  .shell {
+    padding: 16px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-card,
+  .history-card__content {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .history-card__actions {
+    justify-content: flex-end;
+  }
 }

@@ -6,7 +6,9 @@ const historyFileName = "text-history.json";
 const settingsFileName = "settings.json";
 export const defaultClipboardHistorySettings: ClipboardHistorySettings = {
   retentionDays: 3,
-  launchAtLogin: false
+  launchAtLogin: false,
+  floatingButtonVisible: true,
+  floatingWindowPosition: null
 };
 
 function isClipboardHistoryItem(value: unknown): value is ClipboardHistoryItem {
@@ -51,6 +53,23 @@ function isRetentionDays(value: unknown): value is RetentionDays {
   return value === 1 || value === 3 || value === 5;
 }
 
+function normalizeFloatingWindowPosition(value: unknown): ClipboardHistorySettings["floatingWindowPosition"] {
+  if (!value || typeof value !== "object") {
+    return defaultClipboardHistorySettings.floatingWindowPosition;
+  }
+
+  const position = value as Record<string, unknown>;
+
+  if (typeof position.x !== "number" || typeof position.y !== "number") {
+    return defaultClipboardHistorySettings.floatingWindowPosition;
+  }
+
+  return {
+    x: position.x,
+    y: position.y
+  };
+}
+
 function normalizeClipboardHistorySettings(value: unknown): ClipboardHistorySettings {
   if (!value || typeof value !== "object") {
     return defaultClipboardHistorySettings;
@@ -65,7 +84,12 @@ function normalizeClipboardHistorySettings(value: unknown): ClipboardHistorySett
     launchAtLogin:
       typeof settings.launchAtLogin === "boolean"
         ? settings.launchAtLogin
-        : defaultClipboardHistorySettings.launchAtLogin
+        : defaultClipboardHistorySettings.launchAtLogin,
+    floatingButtonVisible:
+      typeof settings.floatingButtonVisible === "boolean"
+        ? settings.floatingButtonVisible
+        : defaultClipboardHistorySettings.floatingButtonVisible,
+    floatingWindowPosition: normalizeFloatingWindowPosition(settings.floatingWindowPosition)
   };
 }
 
